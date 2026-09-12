@@ -1,0 +1,18 @@
+services:
+  hookping:
+    build: .
+    image: hookping:local
+    container_name: hookping
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      HOOKPING_DATABASE_URL: sqlite:////data/hookping.db
+    volumes:
+      - hookping-data:/data
+
+volumes:
+  hookping-data:
