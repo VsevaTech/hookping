@@ -1,0 +1,11 @@
+{
+  "service": "checkout-api",
+  "environment": "production",
+  "level": "error",
+  "message": "Payment provider timeout after 30s",
+  "error": {
+    "type": "TimeoutError",
+    "count_last_5m": 17
+  },
+  "url": "https://status.example.com/incidents/8813"
+}

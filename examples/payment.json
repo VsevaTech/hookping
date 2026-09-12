@@ -1,0 +1,7 @@
+{
+  "customer": "Acme Ltd",
+  "amount": 129,
+  "currency": "USD",
+  "status": "paid",
+  "invoice_id": "INV-2026-0042"
+}

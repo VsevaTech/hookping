@@ -1,0 +1,9 @@
+{
+  "name": "Ivan Petrov",
+  "email": "ivan@example.com",
+  "company": "Northwind Traders",
+  "plan": "Pro",
+  "amount": 250,
+  "source": "website-form",
+  "message": "Interested in the annual plan for a team of 12."
+}

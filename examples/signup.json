@@ -1,0 +1,10 @@
+{
+  "user": {
+    "id": 48213,
+    "email": "maria@example.org",
+    "name": "Maria Lopez"
+  },
+  "plan": "free",
+  "referrer": "producthunt",
+  "signed_up_at": "2026-09-12T10:41:00Z"
+}
