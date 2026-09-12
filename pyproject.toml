@@ -1,0 +1,36 @@
+[project]
+name = "hookping"
+version = "0.1.0"
+description = "Turn any webhook into a human-readable Telegram notification."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+extend-exclude = [".venv", "data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "N", "PL"]
+ignore = [
+  "PLR2004", # magic values in tests/limits are fine
+  "PLR0913", # UI handlers take several dependencies
+  "PLR0917", # same: FastAPI injects them positionally
+  "RUF012",  # mutable class attributes (pydantic/SQLAlchemy declarations)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["PLR2004", "PLC0415"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = [
+  "error::DeprecationWarning:app.*",
+  "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+  "ignore:The anyio.abc.BlockingPortal alias is deprecated",
+]
