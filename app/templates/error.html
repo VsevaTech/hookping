@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ status_code }} · HookPing{% endblock %}
+{% block content %}
+<div class="narrow card empty">
+  <h1>{{ status_code }}</h1>
+  <p>{{ detail }}</p>
+  <a class="btn" href="/">Back to inboxes</a>
+</div>
+{% endblock %}

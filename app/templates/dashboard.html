@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Inboxes · HookPing{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Inboxes</h1>
+    <p class="lead">Each inbox has its own webhook URL. Point any system at it and get a readable Telegram message.</p>
+  </div>
+  <a class="btn btn-primary" href="/inboxes/new">Create Inbox</a>
+</div>
+
+{% if rows %}
+<div class="grid">
+  {% for row in rows %}
+  <article class="card inbox-card">
+    <div class="card-head">
+      <h2><a href="/inboxes/{{ row.inbox.id }}">{{ row.inbox.name }}</a></h2>
+      {% if row.inbox.telegram_configured %}
+        <span class="badge badge-sent">Telegram ✓</span>
+      {% elif telegram_enabled %}
+        <span class="badge badge-muted">Telegram not connected</span>
+      {% else %}
+        <span class="badge badge-muted">Bot token not set</span>
+      {% endif %}
+    </div>
+    <div class="url-row">
+      <code class="url" title="{{ row.url }}">{{ row.url }}</code>
+      <button class="btn btn-small" type="button" data-copy="{{ row.url }}">Copy</button>
+    </div>
+    <div class="meta-row">
+      <span>{{ row.events }} event{{ '' if row.events == 1 else 's' }}</span>
+      {% if row.latest %}
+        <span>· last {{ row.latest.received_at | dt }}</span>
+        <span class="badge badge-{{ row.latest.delivery_status }}">{{ row.latest.delivery_status | status_label }}</span>
+      {% else %}
+        <span>· waiting for the first webhook</span>
+      {% endif %}
+    </div>
+  </article>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card empty">
+  <h2>No inboxes yet</h2>
+  <p>Create your first inbox to get a webhook URL you can paste into Stripe, a CRM, a form builder or your own backend.</p>
+  <a class="btn btn-primary" href="/inboxes/new">Create Inbox</a>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}{{ inbox.name }} · HookPing{% endblock %}
+{% block content %}
+<a class="back" href="/">← Inboxes</a>
+<div class="page-head">
+  <div>
+    <h1>{{ inbox.name }}</h1>
+    <p class="lead">Created {{ inbox.created_at | dt }}</p>
+  </div>
+  <form method="post" action="/inboxes/{{ inbox.id }}/delete" data-confirm="Delete inbox “{{ inbox.name }}” and all its events?">
+    <button class="btn btn-danger-ghost" type="submit">Delete inbox</button>
+  </form>
+</div>
+
+<section class="card">
+  <h2>Webhook URL</h2>
+  <p class="help">Send <code>POST</code> requests with a JSON body to this URL. Keep it secret — the token is the only credential.</p>
+  <div class="url-row">
+    <code class="url" id="webhook-url">{{ url }}</code>
+    <button class="btn btn-small" type="button" data-copy="{{ url }}">Copy</button>
+  </div>
+  <details class="curl">
+    <summary>Try it with curl</summary>
+<pre><code>curl -X POST {{ url }} \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Ivan", "plan": "Pro", "amount": 250}'</code></pre>
+  </details>
+</section>
+
+<div class="two-col">
+  <section class="card" id="telegram-card" data-inbox-id="{{ inbox.id }}" data-connected="{{ 'true' if inbox.telegram_configured else 'false' }}">
+    <h2>Telegram</h2>
+    {% if inbox.telegram_configured %}
+      <p class="status-line"><span class="badge badge-sent">✅ Connected</span>
+        {% if inbox.telegram_display_name %}<span class="mono">{{ inbox.telegram_display_name }}</span>{% endif %}
+      </p>
+      {% if inbox.telegram_connected_at %}<p class="help">Connected {{ inbox.telegram_connected_at | dt }}</p>{% endif %}
+      <div class="actions">
+        <form method="post" action="/inboxes/{{ inbox.id }}/telegram/test">
+          <button class="btn btn-primary" type="submit">Send test notification</button>
+        </form>
+        <form method="post" action="/inboxes/{{ inbox.id }}/telegram/disconnect">
+          <button class="btn" type="submit">Disconnect</button>
+        </form>
+      </div>
+    {% elif not telegram_enabled %}
+      <p class="status-line"><span class="badge badge-muted">Not connected</span></p>
+      <p class="help">The server has no <code>TELEGRAM_BOT_TOKEN</code>. Set it in <code>.env</code> and restart HookPing to enable Telegram delivery. Events are still stored.</p>
+    {% elif pending_connection %}
+      <p class="status-line"><span class="badge badge-pending">Waiting for Telegram…</span></p>
+      <p>Open <strong>@{{ bot_username }}</strong> and press <strong>Start</strong>. This page updates automatically.</p>
+      <div class="actions">
+        <a class="btn btn-primary" href="{{ deep_link }}" target="_blank" rel="noopener">Open Telegram</a>
+        <form method="post" action="/inboxes/{{ inbox.id }}/telegram/connect">
+          <button class="btn" type="submit">New link</button>
+        </form>
+      </div>
+      <p class="help">Link expires {{ pending_connection.expires_at | dt }} and can be used once.</p>
+      <details class="advanced">
+        <summary>Link a group or channel instead</summary>
+        <p class="help">Add @{{ bot_username }} to the group/channel, then enter its chat ID (e.g. <code>-1001234567890</code>) or a public <code>@channel</code> handle.</p>
+        <form method="post" action="/inboxes/{{ inbox.id }}/telegram/manual" class="inline-form">
+          <input name="telegram_chat_id" type="text" placeholder="-1001234567890" required>
+          <button class="btn btn-small" type="submit">Link</button>
+        </form>
+      </details>
+    {% else %}
+      <p class="status-line"><span class="badge badge-muted">Not connected</span></p>
+      <p class="help">Link a Telegram chat to receive notifications for this inbox.</p>
+      <form method="post" action="/inboxes/{{ inbox.id }}/telegram/connect">
+        <button class="btn btn-primary" type="submit">Connect Telegram</button>
+      </form>
+      <details class="advanced">
+        <summary>Link a group or channel instead</summary>
+        <p class="help">Add @{{ bot_username }} to the group/channel, then enter its chat ID (e.g. <code>-1001234567890</code>) or a public <code>@channel</code> handle.</p>
+        <form method="post" action="/inboxes/{{ inbox.id }}/telegram/manual" class="inline-form">
+          <input name="telegram_chat_id" type="text" placeholder="-1001234567890" required>
+          <button class="btn btn-small" type="submit">Link</button>
+        </form>
+      </details>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Available fields</h2>
+    {% if sample_is_real %}
+      <p class="help">From the latest event. Click a field to insert it into the template.</p>
+    {% else %}
+      <p class="help">No events yet — showing fields from a sample payload. Send a webhook to see your own.</p>
+    {% endif %}
+    {% if paths %}
+      <div class="chips">
+        {% for path in paths %}
+          <button type="button" class="chip" data-insert="{{ '{{ ' ~ path ~ ' }}' }}"><code>{{ path }}</code></button>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="help">The payload has no addressable fields. Use <code>{{ '{{ payload }}' }}</code> to print it.</p>
+    {% endif %}
+  </section>
+</div>
+
+<section class="card">
+  <h2>Message template</h2>
+  <p class="help">
+    Jinja2 syntax. Use <code>{{ '{{ field }}' }}</code> and <code>{{ '{{ nested.field }}' }}</code>; missing fields render as empty.
+    Extra: <code>{{ '{{ payload | tojson_pretty }}' }}</code>, <code>{{ '{{ amount | money }}' }}</code>, <code>{{ '{{ inbox.name }}' }}</code>.
+    Leave it empty to send the default message with the whole payload.
+  </p>
+  <form method="post" action="/inboxes/{{ inbox.id }}/template" class="form">
+    <textarea id="message_template" name="message_template" rows="8" spellcheck="false" placeholder="{{ default_template }}">{{ template_draft }}</textarea>
+    {% if template_error %}<p class="field-error">{{ template_error }}</p>{% endif %}
+    <div class="actions">
+      <button class="btn btn-primary" type="submit" name="action" value="save">Save template</button>
+      <button class="btn" type="submit" name="action" value="preview">Preview</button>
+    </div>
+  </form>
+  <div class="preview">
+    <h3>Preview <span class="help">({{ 'latest event' if sample_is_real else 'sample payload' }})</span></h3>
+    {% if preview.ok %}
+      <pre class="message">{{ preview.text }}</pre>
+    {% else %}
+      <p class="field-error">{{ preview.error }}</p>
+    {% endif %}
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <h2>Recent events</h2>
+    <span class="help">{{ events | length }} shown</span>
+  </div>
+  {% if events %}
+  <table class="events">
+    <thead><tr><th>Received</th><th>Status</th><th>Message</th><th></th></tr></thead>
+    <tbody>
+    {% for event in events %}
+      <tr>
+        <td class="mono nowrap"><a href="/inboxes/{{ inbox.id }}/events/{{ event.id }}">{{ event.received_at | dt }}</a></td>
+        <td><span class="badge badge-{{ event.delivery_status }}">{{ event.delivery_status | status_label }}</span></td>
+        <td class="ellipsis">{{ (event.rendered_message or event.delivery_error or event.payload) | truncate(90) }}</td>
+        <td class="nowrap"><a class="btn btn-small" href="/inboxes/{{ inbox.id }}/events/{{ event.id }}">Open</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p class="help">No events yet. Send a request to the webhook URL above and it will appear here.</p>
+  {% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Create Inbox · HookPing{% endblock %}
+{% block content %}
+<div class="narrow">
+  <a class="back" href="/">← Inboxes</a>
+  <h1>Create Inbox</h1>
+  <p class="lead">Give it a name you will recognise in Telegram, e.g. <em>Sales Leads</em> or <em>Production Alerts</em>.</p>
+  <form method="post" action="/inboxes" class="card form">
+    <label for="name">Name</label>
+    <input id="name" name="name" type="text" value="{{ name }}" maxlength="120" required autofocus placeholder="Sales Leads">
+    {% if error %}<p class="field-error">{{ error }}</p>{% endif %}
+    <div class="actions">
+      <button class="btn btn-primary" type="submit">Create Inbox</button>
+      <a class="btn" href="/">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

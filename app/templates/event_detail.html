@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Event · {{ inbox.name }} · HookPing{% endblock %}
+{% block content %}
+<a class="back" href="/inboxes/{{ inbox.id }}">← {{ inbox.name }}</a>
+<div class="page-head">
+  <div>
+    <h1>Event <span class="mono small">{{ event.id }}</span></h1>
+    <p class="lead">Received {{ event.received_at | dt }} · <code>{{ event.method }}</code> {{ event.content_type or 'no content type' }}</p>
+  </div>
+  <span class="badge badge-lg badge-{{ event.delivery_status }}">{{ event.delivery_status | status_label }}</span>
+</div>
+
+<div class="two-col">
+  <section class="card">
+    <h2>Payload</h2>
+    <pre class="json"><code>{{ event.payload_pretty }}</code></pre>
+  </section>
+  <section class="card">
+    <h2>Rendered message</h2>
+    {% if event.rendered_message %}
+      <pre class="message">{{ event.rendered_message }}</pre>
+    {% else %}
+      <p class="help">Nothing rendered.</p>
+    {% endif %}
+
+    <h2>Delivery</h2>
+    <dl class="kv">
+      <dt>Status</dt><dd><span class="badge badge-{{ event.delivery_status }}">{{ event.delivery_status | status_label }}</span></dd>
+      <dt>Delivered at</dt><dd>{{ event.delivered_at | dt }}</dd>
+      <dt>Error</dt><dd>{% if event.delivery_error %}<span class="error-text">{{ event.delivery_error }}</span>{% else %}—{% endif %}</dd>
+    </dl>
+    <form method="post" action="/inboxes/{{ inbox.id }}/events/{{ event.id }}/redeliver">
+      <button class="btn" type="submit">Render &amp; deliver again</button>
+    </form>
+    <p class="help">Re-runs the current template against this payload and, if Telegram is connected, sends it again.</p>
+  </section>
+</div>
+{% endblock %}
