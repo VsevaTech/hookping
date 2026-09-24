@@ -113,7 +113,7 @@ def test_missing_timestamp_header() -> None:
     assert reason_of(headers=headers("sha256=00", timestamp=None)) is RejectReason.MISSING_TIMESTAMP
 
 
-@pytest.mark.parametrize("value", ["-5", "1.5", "abc", "\\u00b2\\u00b3", "9" * 20, "2026-01-01T00:00:00Z"])
+@pytest.mark.parametrize("value", ["-5", "1.5", "abc", "²³", "9" * 20, "2026-01-01T00:00:00Z"])
 def test_invalid_timestamp(value: str) -> None:
     assert reason_of(headers=headers("sha256=" + "0" * 64, value)) is RejectReason.INVALID_TIMESTAMP
 
