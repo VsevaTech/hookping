@@ -14,7 +14,11 @@
 
 <section class="card">
   <h2>Webhook URL</h2>
-  <p class="help">Send <code>POST</code> requests with a JSON body to this URL. Keep it secret — the token is the only credential.</p>
+  {% if inbox.verification_enabled %}
+  <p class="help">Send <code>POST</code> requests with a JSON body to this URL. Every request must be signed — see <a href="#verification-card">Signature verification</a>.</p>
+  {% else %}
+  <p class="help">Send <code>POST</code> requests with a JSON body to this URL. Keep it secret — the token is the only credential unless you enable <a href="#verification-card">signature verification</a>.</p>
+  {% endif %}
   <div class="url-row">
     <code class="url" id="webhook-url">{{ url }}</code>
     <button class="btn btn-small" type="button" data-copy="{{ url }}">Copy</button>
@@ -24,6 +28,116 @@
 <pre><code>curl -X POST {{ url }} \
   -H "Content-Type: application/json" \
   -d '{"name": "Ivan", "plan": "Pro", "amount": 250}'</code></pre>
+  </details>
+</section>
+
+<section class="card" id="verification-card">
+  <div class="card-head">
+    <h2>Signature verification</h2>
+    {% if inbox.verification_enabled %}
+      <span class="badge badge-sent">🔏 {{ inbox.verification_mode | verification_label }}</span>
+    {% else %}
+      <span class="badge badge-muted">Verification: None</span>
+    {% endif %}
+  </div>
+  <p class="help">
+    With <strong>HMAC SHA-256</strong> HookPing accepts only requests signed with this inbox's secret, rejects
+    requests whose timestamp is outside the allowed window and refuses to accept the same signed request twice.
+    Unsigned requests get <code>401</code>, replays get <code>409</code>.
+  </p>
+
+  {% if revealed_secret %}
+    <div class="notice notice-warn secret-reveal">
+      <p><strong>Copy this secret now.</strong> It is shown only once and cannot be retrieved later.</p>
+      <div class="url-row">
+        <code class="url" id="revealed-secret">{{ revealed_secret }}</code>
+        <button class="btn btn-small" type="button" data-copy="{{ revealed_secret }}">Copy</button>
+      </div>
+    </div>
+  {% endif %}
+  {% if verification_error %}<p class="field-error">{{ verification_error }}</p>{% endif %}
+
+  <div class="two-col">
+    <form method="post" action="/inboxes/{{ inbox.id }}/verification" class="form verification-form">
+      <fieldset class="radio-row">
+        <legend>Verification</legend>
+        {% for value, label in verification_modes.items() %}
+          <label class="radio"><input type="radio" name="verification_mode" value="{{ value }}"
+            {{ 'checked' if inbox.verification_mode == value }}
+            {{ 'disabled' if value != 'none' and not inbox.has_signing_secret }}> {{ label }}</label>
+        {% endfor %}
+      </fieldset>
+      {% if not inbox.has_signing_secret %}<p class="help">Set a signing secret to enable HMAC SHA-256.</p>{% endif %}
+      <div class="field-grid">
+        <label>Signature header <input name="signature_header" type="text" value="{{ inbox.signature_header }}" required maxlength="64" spellcheck="false"></label>
+        <label>Timestamp header <input name="timestamp_header" type="text" value="{{ inbox.timestamp_header }}" required maxlength="64" spellcheck="false"></label>
+        <label>Tolerance, seconds <input name="timestamp_tolerance_seconds" type="number" min="{{ tolerance_min }}" max="{{ tolerance_max }}" value="{{ inbox.timestamp_tolerance_seconds }}" required></label>
+      </div>
+      <div class="actions"><button class="btn btn-primary" type="submit">Save verification</button></div>
+    </form>
+
+    <div>
+      <h3>Signing secret</h3>
+      {% if inbox.has_signing_secret %}
+        <p class="status-line"><span class="badge badge-sent">Secret set</span><span class="help">{{ inbox.signing_secret_set_at | dt }}</span></p>
+        <p class="help">The secret is stored separately and is never shown again. Generating or pasting a new one replaces it immediately.</p>
+      {% else %}
+        <p class="status-line"><span class="badge badge-muted">No secret</span></p>
+      {% endif %}
+      <form method="post" action="/inboxes/{{ inbox.id }}/verification/secret"
+        {% if inbox.has_signing_secret %}data-confirm="Replace the signing secret? Senders using the old one will be rejected."{% endif %}>
+        <input type="hidden" name="action" value="generate">
+        <button class="btn" type="submit">{{ 'Rotate: generate new secret' if inbox.has_signing_secret else 'Generate secret' }}</button>
+      </form>
+      <details class="advanced">
+        <summary>Use a secret from your provider</summary>
+        <form method="post" action="/inboxes/{{ inbox.id }}/verification/secret" class="inline-form" autocomplete="off">
+          <input type="hidden" name="action" value="save">
+          <input name="secret" type="password" placeholder="Paste secret" required minlength="16" maxlength="256" autocomplete="new-password" spellcheck="false">
+          <button class="btn btn-small" type="submit">Save</button>
+        </form>
+      </details>
+      {% if inbox.has_signing_secret %}
+        <form method="post" action="/inboxes/{{ inbox.id }}/verification/secret/delete" class="mt"
+          data-confirm="Remove the signing secret? Verification will be switched off.">
+          <button class="btn btn-small btn-danger-ghost" type="submit">Remove secret</button>
+        </form>
+      {% endif %}
+      {% if inbox.last_rejected_at %}
+        <h3>Last rejected request</h3>
+        <p class="help"><span class="mono">{{ inbox.last_rejected_at | dt }}</span> — <span class="error-text">{{ inbox.last_rejection_reason }}</span></p>
+      {% endif %}
+    </div>
+  </div>
+
+  <details class="curl">
+    <summary>How to sign a request</summary>
+    <p class="help">
+      Sign <code>&lt;timestamp&gt;.&lt;raw body&gt;</code> with HMAC-SHA256 and send
+      <code>{{ inbox.timestamp_header }}: &lt;unix seconds&gt;</code> and
+      <code>{{ inbox.signature_header }}: sha256=&lt;hex&gt;</code>. Sign the exact bytes you send.
+      Several comma-separated signatures are accepted, which helps while rotating secrets.
+    </p>
+<pre><code>SECRET='whsec_…'
+BODY='{"name": "Ivan", "plan": "Pro", "amount": 250}'
+TS=$(date +%s)
+SIG=$(printf '%s.%s' "$TS" "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | sed 's/^.* //')
+
+curl -X POST {{ url }} \
+  -H "Content-Type: application/json" \
+  -H "{{ inbox.timestamp_header }}: $TS" \
+  -H "{{ inbox.signature_header }}: sha256=$SIG" \
+  --data-binary "$BODY"</code></pre>
+<pre class="mt"><code>import hashlib, hmac, json, time, httpx
+
+body = json.dumps({"name": "Ivan", "plan": "Pro"}).encode()
+ts = str(int(time.time()))
+sig = hmac.new(SECRET.encode(), ts.encode() + b"." + body, hashlib.sha256).hexdigest()
+httpx.post("{{ url }}", content=body, headers={
+    "Content-Type": "application/json",
+    "{{ inbox.timestamp_header }}": ts,
+    "{{ inbox.signature_header }}": f"sha256={sig}",
+})</code></pre>
   </details>
 </section>
 
@@ -137,7 +251,7 @@
     {% for event in events %}
       <tr>
         <td class="mono nowrap"><a href="/inboxes/{{ inbox.id }}/events/{{ event.id }}">{{ event.received_at | dt }}</a></td>
-        <td><span class="badge badge-{{ event.delivery_status }}">{{ event.delivery_status | status_label }}</span></td>
+        <td class="nowrap"><span class="badge badge-{{ event.delivery_status }}">{{ event.delivery_status | status_label }}</span>{% if event.verification != 'none' %} <span class="badge badge-signed" title="Signature verified ({{ event.verification | verification_label }})">🔏 signed</span>{% endif %}</td>
         <td class="ellipsis">{{ (event.rendered_message or event.delivery_error or event.payload) | truncate(90) }}</td>
         <td class="nowrap"><a class="btn btn-small" href="/inboxes/{{ inbox.id }}/events/{{ event.id }}">Open</a></td>
       </tr>

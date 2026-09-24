@@ -17,6 +17,7 @@ from app.database import get_db
 from app.models import DeliveryStatus, Event, Inbox
 from app.models.inbox import utcnow
 from app.services import inboxes as inbox_service
+from app.services import signatures
 from app.services import telegram_linking as linking
 from app.services.delivery import deliver_event, get_telegram_client
 from app.services.json_paths import extract_paths
@@ -50,6 +51,7 @@ def _format_dt(value: datetime | None, fmt: str = "%Y-%m-%d %H:%M:%S") -> str:
 
 templates.env.filters["dt"] = _format_dt
 templates.env.filters["status_label"] = lambda s: STATUS_LABELS.get(s, s)
+templates.env.filters["verification_label"] = lambda s: signatures.VERIFICATION_LABELS.get(s, s)
 
 
 def wants_html(request: Request) -> bool:
@@ -141,6 +143,8 @@ def _inbox_context(
     template_draft: str | None = None,
     preview: dict[str, Any] | None = None,
     template_error: str | None = None,
+    revealed_secret: str | None = None,
+    verification_error: str | None = None,
 ) -> dict[str, Any]:
     events = inbox_service.recent_events(db, inbox)
     latest = events[0] if events else None
@@ -164,6 +168,11 @@ def _inbox_context(
         "pending_connection": pending,
         "deep_link": linking.deep_link(pending.token) if pending else None,
         "bot_username": settings.telegram_bot_username,
+        "revealed_secret": revealed_secret,
+        "verification_error": verification_error,
+        "verification_modes": signatures.VERIFICATION_LABELS,
+        "tolerance_min": signatures.MIN_TOLERANCE_SECONDS,
+        "tolerance_max": signatures.MAX_TOLERANCE_SECONDS,
     }
 
 
@@ -193,6 +202,92 @@ def update_template(
     inbox.message_template = draft
     db.commit()
     return redirect(f"/inboxes/{inbox.id}", "Template saved.")
+
+
+@router.post("/inboxes/{inbox_id}/verification", response_model=None)
+def update_verification(
+    request: Request,
+    inbox_id: str,
+    db: DbDep,
+    settings: SettingsDep,
+    verification_mode: Annotated[str, Form()] = signatures.VerificationMode.NONE.value,
+    signature_header: Annotated[str, Form()] = "X-Signature",
+    timestamp_header: Annotated[str, Form()] = "X-Timestamp",
+    timestamp_tolerance_seconds: Annotated[str, Form()] = str(signatures.DEFAULT_TOLERANCE_SECONDS),
+) -> Response:
+    inbox = _load_inbox(db, inbox_id)
+    signature_header = signature_header.strip()
+    timestamp_header = timestamp_header.strip()
+    error = _verification_settings_error(
+        inbox, verification_mode, signature_header, timestamp_header, timestamp_tolerance_seconds
+    )
+    if error:
+        context = _inbox_context(request, db, settings, inbox, verification_error=error)
+        return render(request, "inbox_detail.html", context, status_code=400)
+
+    inbox.verification_mode = verification_mode
+    inbox.signature_header = signature_header
+    inbox.timestamp_header = timestamp_header
+    inbox.timestamp_tolerance_seconds = int(timestamp_tolerance_seconds)
+    db.commit()
+    label = signatures.VERIFICATION_LABELS[verification_mode]
+    return redirect(f"/inboxes/{inbox.id}", f"Verification saved: {label}.")
+
+
+def _verification_settings_error(
+    inbox: Inbox, mode: str, signature_header: str, timestamp_header: str, tolerance: str
+) -> str | None:
+    if mode not in signatures.VERIFICATION_LABELS:
+        return "Unknown verification mode."
+    if mode == signatures.VerificationMode.HMAC_SHA256.value and not inbox.has_signing_secret:
+        return "Set a signing secret before enabling HMAC SHA-256."
+    for header in (signature_header, timestamp_header):
+        if error := signatures.validate_header_name(header):
+            return error
+    if signature_header.lower() == timestamp_header.lower():
+        return "Signature and timestamp headers must be different."
+    if not tolerance.strip().isdigit() or not (
+        signatures.MIN_TOLERANCE_SECONDS <= int(tolerance) <= signatures.MAX_TOLERANCE_SECONDS
+    ):
+        return (
+            f"Timestamp tolerance must be between {signatures.MIN_TOLERANCE_SECONDS} "
+            f"and {signatures.MAX_TOLERANCE_SECONDS} seconds."
+        )
+    return None
+
+
+@router.post("/inboxes/{inbox_id}/verification/secret", response_model=None)
+def update_signing_secret(
+    request: Request,
+    inbox_id: str,
+    db: DbDep,
+    settings: SettingsDep,
+    action: Annotated[str, Form()] = "generate",
+    secret: Annotated[str, Form()] = "",
+) -> Response:
+    """Generate or paste the HMAC key. It is shown once (generated) or never (pasted)."""
+    inbox = _load_inbox(db, inbox_id)
+    if action == "generate":
+        generated = signatures.generate_secret()
+        inbox_service.set_signing_secret(db, inbox, generated)
+        context = _inbox_context(request, db, settings, inbox, revealed_secret=generated)
+        response = render(request, "inbox_detail.html", context)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    value = secret.strip()
+    if error := signatures.validate_secret(value):
+        context = _inbox_context(request, db, settings, inbox, verification_error=error)
+        return render(request, "inbox_detail.html", context, status_code=400)
+    inbox_service.set_signing_secret(db, inbox, value)
+    return redirect(f"/inboxes/{inbox.id}", "Signing secret saved. It will not be shown again.")
+
+
+@router.post("/inboxes/{inbox_id}/verification/secret/delete", response_model=None)
+def delete_signing_secret(inbox_id: str, db: DbDep) -> Response:
+    inbox = _load_inbox(db, inbox_id)
+    inbox_service.delete_signing_secret(db, inbox)
+    return redirect(f"/inboxes/{inbox.id}", "Signing secret removed. Verification is off.")
 
 
 @router.post("/inboxes/{inbox_id}/telegram/connect", response_model=None)

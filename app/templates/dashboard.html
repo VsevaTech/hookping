@@ -23,6 +23,7 @@
         <span class="badge badge-muted">Bot token not set</span>
       {% endif %}
     </div>
+    {% if row.inbox.verification_enabled %}<p class="help">🔏 {{ row.inbox.verification_mode | verification_label }} verification</p>{% endif %}
     <div class="url-row">
       <code class="url" title="{{ row.url }}">{{ row.url }}</code>
       <button class="btn btn-small" type="button" data-copy="{{ row.url }}">Copy</button>

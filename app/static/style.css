@@ -101,10 +101,13 @@ main.container { padding-top: 28px; padding-bottom: 40px; }
 .badge-sent { background: var(--ok-bg); color: var(--ok-fg); }
 .badge-failed { background: var(--fail-bg); color: var(--fail-fg); }
 .badge-pending { background: var(--pend-bg); color: var(--pend-fg); }
+.badge-signed { background: #e8efff; color: #1e46b4; }
 .badge-not_configured, .badge-muted { background: var(--muted-bg); color: var(--muted-fg); }
 
 .notice { border-radius: 10px; padding: 12px 16px; margin-bottom: 18px; border: 1px solid; }
 .notice-ok { background: var(--ok-bg); color: var(--ok-fg); border-color: #b9e4c7; }
+.notice-warn { background: var(--pend-bg); color: var(--pend-fg); border-color: #f3dca6; }
+.notice-warn .url { background: #fff; color: var(--text); }
 .notice-error { background: var(--fail-bg); color: var(--fail-fg); border-color: #f1c0bb; }
 
 .help { color: var(--muted); font-size: .9rem; }
@@ -114,13 +117,21 @@ main.container { padding-top: 28px; padding-bottom: 40px; }
 .field-error { color: var(--fail-fg); font-size: .9rem; margin-top: 6px; }
 
 .form label { display: block; font-weight: 600; margin-bottom: 6px; }
-input[type=text], textarea {
+input[type=text], input[type=password], input[type=number], textarea {
   width: 100%; font: inherit; color: var(--text); background: #fff;
   border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px;
 }
 textarea { font-family: var(--mono); font-size: .92rem; line-height: 1.5; resize: vertical; }
 input:focus, textarea:focus { outline: 2px solid rgba(37, 99, 235, .35); border-color: var(--primary); }
 .inline-form { display: flex; gap: 8px; }
+.mt { margin-top: 12px; }
+.secret-reveal p { margin-bottom: 8px; }
+fieldset.radio-row { border: 0; padding: 0; margin: 0 0 10px; display: flex; gap: 18px; flex-wrap: wrap; }
+fieldset.radio-row legend { font-weight: 600; margin-bottom: 6px; padding: 0; }
+.form label.radio { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; margin: 0; }
+.field-grid { display: grid; gap: 10px; }
+.field-grid label { font-weight: 600; font-size: .9rem; }
+.field-grid input { margin-top: 4px; font-weight: 400; }
 .inline-form input { flex: 1; }
 
 pre {

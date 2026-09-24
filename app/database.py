@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Generator
 from pathlib import Path
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -49,12 +49,45 @@ engine: Engine = build_engine(get_settings().database_url)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 
-def init_db() -> None:
-    """Create all tables. Safe to call on every start."""
+def init_db(bind: Engine | None = None) -> None:
+    """Create missing tables and add missing columns. Safe to call on every start."""
     # Import models so they are registered on the metadata.
     import app.models  # noqa: F401, PLC0415
 
-    Base.metadata.create_all(bind=engine)
+    bind = bind or engine
+    Base.metadata.create_all(bind=bind)
+    add_missing_columns(bind)
+
+
+def add_missing_columns(bind: Engine) -> list[str]:
+    """Minimal forward-only migration for existing databases.
+
+    ``create_all`` never alters existing tables, so columns added in newer versions are
+    appended with ``ALTER TABLE ... ADD COLUMN``. New non-nullable columns must declare a
+    ``server_default``. Returns the ``table.column`` names that were added.
+    """
+    added: list[str] = []
+    inspector = inspect(bind)
+    existing_tables = set(inspector.get_table_names())
+    with bind.begin() as connection:
+        for table in Base.metadata.sorted_tables:
+            if table.name not in existing_tables:
+                continue
+            present = {column["name"] for column in inspector.get_columns(table.name)}
+            for column in table.columns:
+                if column.name in present:
+                    continue
+                ddl = f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {column.type.compile(bind.dialect)}'
+                if column.server_default is not None:
+                    default = column.server_default.arg
+                    literal = default if isinstance(default, str) else str(default)
+                    ddl += " NOT NULL" if not column.nullable else ""
+                    ddl += " DEFAULT '" + literal.replace("'", "''") + "'"
+                elif not column.nullable:
+                    raise RuntimeError(f"Column {table.name}.{column.name} needs a server_default to be added")
+                connection.execute(text(ddl))
+                added.append(f"{table.name}.{column.name}")
+    return added
 
 
 def get_db() -> Generator[Session, None, None]:
