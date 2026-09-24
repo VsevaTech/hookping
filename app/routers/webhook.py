@@ -13,9 +13,18 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.database import get_db
+from app.models import Inbox
 from app.schemas import ErrorResponse, WebhookAccepted
+from app.services import signatures
 from app.services.delivery import deliver_event_by_id
-from app.services.inboxes import get_inbox_by_token, store_event
+from app.services.inboxes import (
+    ReplayDetectedError,
+    get_inbox_by_token,
+    get_signing_secret,
+    record_rejection,
+    store_event,
+)
+from app.services.signatures import HmacScheme, RejectReason, SignatureError, VerificationMode, Verified
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +80,9 @@ def parse_payload(body: bytes, content_type: str) -> Any:
     response_model=WebhookAccepted,
     responses={
         400: {"model": ErrorResponse},
+        401: {"model": ErrorResponse, "description": "Signature verification failed"},
         404: {"model": ErrorResponse},
+        409: {"model": ErrorResponse, "description": "Replayed request (signature already accepted)"},
         413: {"model": ErrorResponse},
     },
     summary="Receive a webhook",
@@ -88,11 +99,27 @@ async def receive_webhook(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown hook token")
 
     body = await read_body_limited(request, settings.max_body_bytes)
+
+    # Authenticate the raw bytes before parsing anything.
+    verified: Verified | None = None
+    if inbox.verification_mode == VerificationMode.HMAC_SHA256.value:
+        try:
+            verified = signatures.verify(
+                HmacScheme.for_inbox(inbox), get_signing_secret(db, inbox), request.headers, body
+            )
+        except SignatureError as exc:
+            _reject(db, inbox, exc.reason, exc.message)
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from None
+
     content_type = request.headers.get("content-type", "")
     payload = parse_payload(body, content_type)
 
     try:
-        event = store_event(db, inbox, payload, request.method, content_type)
+        event = store_event(db, inbox, payload, request.method, content_type, verified=verified)
+    except ReplayDetectedError:
+        message = "Duplicate request: this signature was already accepted"
+        _reject(db, inbox, RejectReason.REPLAY, message)
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=message) from None
     except SQLAlchemyError:
         logger.exception("Database error while storing event for inbox %s", inbox.id)
         db.rollback()
@@ -104,3 +131,13 @@ async def receive_webhook(
     # Respond immediately; template rendering and Telegram delivery run afterwards.
     background.add_task(deliver_event_by_id, event.id)
     return WebhookAccepted(event_id=event.id)
+
+
+def _reject(db: Session, inbox: Inbox, reason: RejectReason, message: str) -> None:
+    # Only the reason is logged — never headers, body or secret.
+    logger.warning("Rejected webhook for inbox %s: %s", inbox.id, reason.value)
+    try:
+        record_rejection(db, inbox, message)
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("Could not record rejection for inbox %s", inbox.id)

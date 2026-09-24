@@ -5,7 +5,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, String, Text
+from sqlalchemy import DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -36,6 +36,20 @@ class Inbox(Base):
     hook_token: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False, default=new_hook_token)
     message_template: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
+    # Signature verification. The secret itself lives in ``inbox_signing_secrets``
+    # (see app.models.signing) so it is never loaded together with the inbox.
+    verification_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="none", server_default="none")
+    signature_header: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="X-Signature", server_default="X-Signature"
+    )
+    timestamp_header: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="X-Timestamp", server_default="X-Timestamp"
+    )
+    timestamp_tolerance_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=300, server_default="300")
+    signing_secret_set_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_rejected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_rejection_reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
     telegram_chat_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     telegram_connected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     telegram_username: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -55,6 +69,14 @@ class Inbox(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+
+    @property
+    def verification_enabled(self) -> bool:
+        return self.verification_mode != "none"
+
+    @property
+    def has_signing_secret(self) -> bool:
+        return self.signing_secret_set_at is not None
 
     @property
     def telegram_configured(self) -> bool:

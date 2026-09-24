@@ -30,6 +30,8 @@ class Event(Base):
     content_type: Mapped[str] = mapped_column(String(120), nullable=False, default="")
     # Raw payload stored as JSON text so any JSON value (object, array, scalar) fits.
     payload: Mapped[str] = mapped_column(Text, nullable=False, default="null")
+    # How the request was authenticated: "none" (URL token only) or "hmac_sha256".
+    verification: Mapped[str] = mapped_column(String(20), nullable=False, default="none", server_default="none")
     delivery_status: Mapped[str] = mapped_column(
         String(20), nullable=False, default=DeliveryStatus.NOT_CONFIGURED.value
     )
