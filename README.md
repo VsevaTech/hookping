@@ -34,6 +34,7 @@ you actually want to read.
 - **Jinja2 templates** — `{{ customer.name }}`, loops, conditions, filters — rendered in a sandbox.
 - **Live preview & field picker** — see the fields of your latest payload and click to insert them.
 - **One-click Telegram linking** — *Connect Telegram* → open the bot → *Start*. No hunting for chat IDs.
+- **Signature verification** — optional per-inbox HMAC-SHA256 with timestamp tolerance and replay protection; write-only secrets.
 - **Delivery status per event** — `sent`, `failed` (with the real Telegram error), `pending`, `not_configured`; re-deliver from the UI.
 - **Self-hosted & tiny** — FastAPI + SQLite in one container; `docker compose up` and you are done.
 
@@ -86,9 +87,68 @@ Response:
 The event appears on the inbox page with its pretty-printed payload. `examples/` contains a
 few realistic payloads and `examples/send.sh <TOKEN> examples/lead.json` posts one for you.
 
-Status codes: `200` accepted · `400` body is not valid JSON (or is empty) · `404` unknown token ·
-`413` body over the limit (256 KB by default). Form-encoded bodies (`application/x-www-form-urlencoded`)
+Status codes: `200` accepted · `400` body is not valid JSON (or is empty) · `401` signature
+verification failed · `404` unknown token · `409` replayed signed request · `413` body over the
+limit (256 KB by default). Form-encoded bodies (`application/x-www-form-urlencoded`)
 are accepted too and converted to a JSON object.
+
+## Signature verification
+
+By default the unguessable URL is the only credential. For anything that matters (payments,
+production alerts) turn on **HMAC SHA-256** in the inbox's *Signature verification* card:
+
+1. **Generate secret** — HookPing creates `whsec_…` and shows it **once**. Or paste the secret
+   your provider gave you under *Use a secret from your provider*.
+2. Choose **Verification: HMAC SHA-256**, optionally change the header names and the timestamp
+   tolerance (default 300 s, 30–3600 s), and save.
+
+From then on every request must carry:
+
+```
+X-Timestamp: 1767225600                         # unix seconds (milliseconds also accepted)
+X-Signature: sha256=<hex HMAC-SHA256 of "<timestamp>.<raw body>">
+```
+
+```bash
+TS=$(date +%s)
+BODY='{"customer": "Acme Ltd", "amount": 129}'
+SIG=$(printf '%s.%s' "$TS" "$BODY" | openssl dgst -sha256 -hmac "$HOOKPING_SECRET" | sed 's/^.* //')
+curl -X POST http://localhost:8000/h/<TOKEN> \
+  -H "Content-Type: application/json" \
+  -H "X-Timestamp: $TS" -H "X-Signature: sha256=$SIG" \
+  --data-binary "$BODY"
+```
+
+`HOOKPING_SECRET=whsec_… examples/send-signed.sh <TOKEN> examples/payment.json` does the same for a file.
+
+What HookPing checks, in order, on the **raw bytes** before parsing anything:
+
+| Check | Failure |
+| --- | --- |
+| Signature and timestamp headers present | `401 Missing X-Signature header` |
+| Timestamp is an integer within ± tolerance of server time | `401 Timestamp outside the allowed window of 300s` |
+| Signature is `sha256=<hex>` (bare hex or base64 also accepted) | `401 Malformed X-Signature header` |
+| HMAC matches (constant-time compare) | `401 Invalid signature` |
+| This exact signature was not accepted before | `409 Duplicate request` |
+
+Notes:
+
+- The timestamp is part of the signed string, so an attacker cannot refresh an old request.
+- **Replay protection**: accepted signatures are remembered per inbox until their timestamp can no
+  longer pass the window, then pruned. A replay is rejected and stored nowhere. A request that
+  fails JSON parsing does not "use up" its signature, so a fixed retry still goes through.
+- **Rotation**: the header may hold several comma-separated signatures; any match is accepted.
+  *Rotate* replaces the secret immediately.
+- **The secret is write-only.** It lives in a separate `inbox_signing_secrets` table with no ORM
+  relationship from `Inbox`, is never rendered, returned by an API or logged (its `repr` is
+  redacted). The UI only shows when it was set. HMAC needs the raw key, so it is not hashed —
+  protect the SQLite file like any other credential store.
+- Rejections are logged with a reason code only (never headers or body), and the inbox page
+  shows the *Last rejected request* to debug a misconfigured sender.
+- Events show a 🔏 *signed* badge when they passed verification.
+
+The scheme is intentionally generic; provider presets (GitHub `X-Hub-Signature-256`, Stripe
+`Stripe-Signature`, Slack, Shopify…) can be added as configurations of the same verifier.
 
 ## Configure Telegram
 
@@ -175,13 +235,14 @@ Webhook sender (Stripe, CRM, your backend, curl)
       ▼
 HookPing (FastAPI)
       │  1. look up inbox by token
-      │  2. store Event  ──────────────▶  SQLite (/data/hookping.db)
-      │  3. respond {"received": true}
+      │  2. verify HMAC signature + timestamp (if enabled), reject replays
+      │  3. store Event  ──────────────▶  SQLite (/data/hookping.db)
+      │  4. respond {"received": true}
       ▼
 Background task
-      │  4. render Jinja2 template (sandboxed)
-      │  5. sendMessage via Telegram Bot API
-      │  6. update delivery_status / delivery_error
+      │  5. render Jinja2 template (sandboxed)
+      │  6. sendMessage via Telegram Bot API
+      │  7. update delivery_status / delivery_error
       ▼
 Telegram chat
 
@@ -192,14 +253,15 @@ Telegram long polling (getUpdates) ──▶ /start <token> ──▶ link chat 
 app/
 ├── main.py                 app factory, lifespan (DB init, Telegram poller), error handlers
 ├── config.py               pydantic-settings; everything comes from env / .env
-├── database.py             SQLAlchemy engine/session, create_all on start
-├── models/                 Inbox, Event, TelegramConnection
+├── database.py             SQLAlchemy engine/session, create_all + add-missing-columns on start
+├── models/                 Inbox, Event, TelegramConnection, InboxSigningSecret, SeenSignature
 ├── routers/
 │   ├── webhook.py          POST /h/{token}  (public)
 │   ├── ui.py               server-rendered management UI
 │   ├── api.py              GET /api/inboxes/{id}/telegram/status
 │   └── health.py           GET /health
 ├── services/
+│   ├── signatures.py       HMAC-SHA256 verifier (pure, no I/O), secret/header validation
 │   ├── templating.py       sandboxed Jinja2 rendering
 │   ├── delivery.py         render + send + status bookkeeping
 │   ├── telegram.py         Bot API client (timeouts, structured results, token redaction)
@@ -214,6 +276,8 @@ app/
 ## Security notes
 
 - **Webhook tokens** are 32 random bytes (`secrets.token_urlsafe`), never sequential IDs.
+- **Signature verification** (optional, per inbox): HMAC-SHA256 over `timestamp.body`, timestamp
+  tolerance, replay protection, write-only secrets — see [Signature verification](#signature-verification).
 - **Connection tokens** for Telegram are random, single-use and expire after 10 minutes.
 - **The bot token** is read only from the environment. It is never rendered, returned by any
   endpoint or written to logs (HTTP client logging is muted and error strings are redacted).
@@ -259,7 +323,9 @@ ruff format --check .
 
 Tests use an isolated SQLite file and never call Telegram — the Bot API is replaced with an
 `httpx.MockTransport`. They cover inbox creation and token uniqueness, the webhook endpoint
-(valid/malformed/oversized/unknown), template rendering (nested, missing, invalid, sandbox
+(valid/malformed/oversized/unknown), HMAC verification (encodings, rotation, tampering, stale and
+future timestamps, replays, secret shown once and never again), schema upgrade of an older
+database, template rendering (nested, missing, invalid, sandbox
 escape attempts), the Telegram client (200/400/500/timeout/network error), the `/start`
 linking flow (valid, invalid, expired, reused, bare `/start`, `/help`, poller end-to-end)
 and the full acceptance scenario. CI runs the same plus a Docker build and smoke test.
