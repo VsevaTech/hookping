@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from app.database import SessionLocal
 from app.models import TelegramConnection
 from app.models.telegram_connection import new_connection_token
-from tests.conftest import FAKE_BOT_TOKEN, REPO_ROOT, create_inbox
+from tests.conftest import FAKE_BOT_TOKEN, REPO_ROOT, create_inbox, hook_token
 
 TOKEN_ASSIGNMENT = re.compile(r"TELEGRAM_BOT_TOKEN\s*[=:]\s*\S+")
 
@@ -86,3 +86,32 @@ def test_gitignore_covers_secrets_and_artifacts() -> None:
     gitignore = (REPO_ROOT / ".gitignore").read_text().splitlines()
     for required in (".env", "*.db", "__pycache__/", ".pytest_cache/", "data/"):
         assert required in gitignore, required
+
+
+def test_signing_secret_never_exposed_by_http_surface(client: TestClient) -> None:
+    secret = "whsec_never-show-me-again-0123456789"
+    inbox_id = create_inbox(client)
+    client.post(f"/inboxes/{inbox_id}/verification/secret", data={"action": "save", "secret": secret})
+    client.post(
+        f"/inboxes/{inbox_id}/verification",
+        data={
+            "verification_mode": "hmac_sha256",
+            "signature_header": "X-Signature",
+            "timestamp_header": "X-Timestamp",
+            "timestamp_tolerance_seconds": "300",
+        },
+    )
+    for path in ("/", f"/inboxes/{inbox_id}", f"/api/inboxes/{inbox_id}/telegram/status", "/openapi.json"):
+        response = client.get(path)
+        assert response.status_code == 200, path
+        assert secret not in response.text, path
+    # Rejections do not echo anything secret-derived either.
+    rejected = client.post(f"/h/{hook_token(inbox_id)}", json={"a": 1})
+    assert rejected.status_code == 401
+    assert secret not in rejected.text
+
+
+def test_signing_secret_repr_is_redacted() -> None:
+    from app.models import InboxSigningSecret
+
+    assert "super-secret" not in repr(InboxSigningSecret(inbox_id="x", secret="super-secret"))
