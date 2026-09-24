@@ -23,6 +23,12 @@
       <p class="help">Nothing rendered.</p>
     {% endif %}
 
+    <h2>Authentication</h2>
+    <dl class="kv">
+      <dt>Signature</dt>
+      <dd>{% if event.verification != 'none' %}<span class="badge badge-signed">🔏 verified</span> <span class="help">{{ event.verification | verification_label }}</span>{% else %}<span class="badge badge-muted">not verified</span> <span class="help">URL token only</span>{% endif %}</dd>
+    </dl>
+
     <h2>Delivery</h2>
     <dl class="kv">
       <dt>Status</dt><dd><span class="badge badge-{{ event.delivery_status }}">{{ event.delivery_status | status_label }}</span></dd>
